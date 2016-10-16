@@ -1,4 +1,7 @@
-﻿using System;
+﻿using SimpleLogger;
+using SimpleLogger.Logging.Handlers;
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -8,6 +11,7 @@ using System.Linq;
 using System.Net;
 using System.ServiceProcess;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using VocaliRestServer.Modelos;
 
@@ -17,6 +21,8 @@ namespace VocaliRestServer
     {
         HttpListener httpListener = null;
         BackgroundWorker httpServer = null;
+        BackgroundWorker envioFicheros = null;
+        BlockingCollection<FicheroMP3> ficherosAProcesar = null;
 
         public Servicio()
         {
@@ -25,20 +31,67 @@ namespace VocaliRestServer
 
         protected override void OnStart(string[] args)
         {
-            BD.Init();
-            httpListener = new HttpListener();
-            httpListener.Prefixes.Add("http://*:8080/");
             try
             {
+                Logger.LoggerHandlerManager.AddHandler(new FileLoggerHandler(System.AppDomain.CurrentDomain.BaseDirectory + "log.txt"));
+                BD.Init();
+                httpListener = new HttpListener();
+                httpListener.Prefixes.Add("http://*:8080/");
                 httpListener.Start();
                 httpServer = new BackgroundWorker();
                 httpServer.DoWork += httpServer_DoWork;
                 httpServer.RunWorkerAsync();
+                envioFicheros = new BackgroundWorker();
+                envioFicheros.DoWork += envioFicheros_DoWork;
+                envioFicheros.RunWorkerAsync();
+                ficherosAProcesar = new BlockingCollection<FicheroMP3>(3);
+                Logger.Log("Servicio iniciado correctamente");
             }
             catch (System.Exception ex)
             {
                 ExitCode = ((Win32Exception)ex).ErrorCode;
                 Stop();
+            }
+        }
+
+        void envioFicheros_DoWork(object sender, DoWorkEventArgs e)
+        {
+            while (true)
+            {
+                DateTime hoy = DateTime.Today;
+                DateTime ahora = DateTime.Now;
+                DateTime manana = DateTime.Today.AddDays(1);
+                Logger.Log("Servicio de Envío en espera por: " + (manana-ahora).TotalHours + " horas");
+                Thread.Sleep(manana - ahora);
+                IEnumerable<FicheroMP3> ficheros = BD.GetLista(hoy, manana);
+                foreach (FicheroMP3 f in ficheros)
+                {
+                    ficherosAProcesar.Add(f);
+                    Logger.Log("Fichero añadido a la cola de envío al servidor REST");
+                    Task t = new Task(() =>
+                    {
+                        f.Estado = FicheroMP3.EstadosFicheroMP3.EnProgreso;
+                        BD.ActualizaFicheroMP3(f);
+                        Logger.Log("Fichero enviado al servidor REST");
+                        RespuestaTranscripcion rt = MockupServer.Enviar(f);
+                        Thread.Sleep(2000);
+                        if (rt.Codigo == 200)
+                        {
+                            f.FechaTranscripcion = DateTime.Now;
+                            f.Transcripcion = rt.Transcripcion;
+                            f.Estado = FicheroMP3.EstadosFicheroMP3.Realizada;
+                            BD.ActualizaFicheroMP3(f);
+                        }
+                        else
+                        {
+                            f.Estado = FicheroMP3.EstadosFicheroMP3.Error;
+                            BD.ActualizaFicheroMP3(f);
+                        }
+                        Logger.Log("Fichero procesado en servidor REST");
+                        ficherosAProcesar.Take();
+                    });
+                    t.Start();
+                }
             }
         }
 
@@ -55,9 +108,24 @@ namespace VocaliRestServer
             }
         }
 
+        private DateTime? CheckParamFecha(String fecha, ref byte[] respuesta)
+        {
+            DateTime fechaOut;
+            if (!DateTime.TryParse(fecha, out fechaOut))
+            {
+                RespuestaError re = new RespuestaError()
+                {
+                    Error = "Los parámetros de fecha no tienen el formato correcto. Formato necesario: YYYY-MM-DD"
+                };
+                respuesta = Funciones.GetBytes(Newtonsoft.Json.JsonConvert.SerializeObject(re));
+                return null;
+            }
+            else return fechaOut;
+        }
+
         private void HttpListenerCallback(HttpListenerContext context)
         {
-            byte[] respuesta = null;
+            byte[] respuesta = new byte[0];
             String data_text = new StreamReader(context.Request.InputStream,
                 context.Request.ContentEncoding).ReadToEnd();
 
@@ -67,43 +135,78 @@ namespace VocaliRestServer
 
                 if (ruta[1].CompareTo("fichero") == 0 && context.Request.HttpMethod.CompareTo("POST") == 0 && ruta.Length == 3)
                 {
+                    Logger.Log("Servicio POST fichero iniciado");
                     byte[] fichero = Convert.FromBase64String(data_text);
 
                     if (fichero.Length > 5 * 1024 * 1024)
                     {
                         context.Response.StatusCode = 413;
                         context.Response.StatusDescription = "Request Entity Too Large";
-                        //TODO: Respuesta
+                        RespuestaError re = new RespuestaError()
+                        {
+                            Error = "El fichero no puede ser más grande de 5 MB"
+                        };
+                        respuesta = Funciones.GetBytes(Newtonsoft.Json.JsonConvert.SerializeObject(re));
                     }
 
-                    FicheroMP3 ficheroMP3 = new FicheroMP3()
+                    else
                     {
-                        Usuario = ruta[2],
-                        FechaRecepcion = DateTime.UtcNow,
-                        Estado = FicheroMP3.EstadosFicheroMP3.Pendiente,
-                        FechaTranscripcion = null,
-                        Transcripcion = null
-                    };
+                        FicheroMP3 ficheroMP3 = new FicheroMP3()
+                        {
+                            Usuario = ruta[2],
+                            FechaRecepcion = DateTime.UtcNow,
+                            Estado = FicheroMP3.EstadosFicheroMP3.Pendiente,
+                            FechaTranscripcion = null,
+                            Transcripcion = null
+                        };
 
-                    BD.AddFicheroMP3(ficheroMP3);
+                        BD.AddFicheroMP3(ficheroMP3);
 
-                    using (FileStream fs = new FileStream(System.AppDomain.CurrentDomain.BaseDirectory + ficheroMP3.Id + ".mp3", FileMode.Create, FileAccess.Write))
-                    {
-                        fs.Write(fichero, 0, fichero.Length);
+                        using (FileStream fs = new FileStream(System.AppDomain.CurrentDomain.BaseDirectory + ficheroMP3.Id + ".mp3", FileMode.Create, FileAccess.Write))
+                        {
+                            fs.Write(fichero, 0, fichero.Length);
+                        }
+
+                        context.Response.StatusCode = 200;
+                        context.Response.StatusDescription = "Ok";
                     }
-
-                    context.Response.StatusCode = 200;
-                    context.Response.StatusDescription = "Ok";
                 }
-                else if (ruta[1].CompareTo("ficheros") == 0 && context.Request.HttpMethod.CompareTo("GET") == 0 && ruta.Length >= 3)
+                else if (ruta[1].CompareTo("ficheros") == 0 && context.Request.HttpMethod.CompareTo("GET") == 0 && ruta.Length == 3)
                 {
-                    context.Response.StatusCode = 200;
-                    context.Response.StatusDescription = "Ok";
-                    //TODO: Procesar fechas
-                    respuesta = Funciones.GetBytes(Newtonsoft.Json.JsonConvert.SerializeObject(BD.GetLista(ruta[2])));
+                    Logger.Log("Servicio GET ficheros iniciado");
+                    DateTime? desde = null;
+                    DateTime? hasta = null;
+                    Boolean paramsOK = true;
+
+                    if (context.Request.QueryString["desde"] != null)
+                    {
+                        desde = CheckParamFecha(context.Request.QueryString["desde"], ref respuesta);
+                        if (desde == null)
+                            paramsOK = false;
+                    }
+                    if (context.Request.QueryString["hasta"] != null)
+                    {
+                        hasta = CheckParamFecha(context.Request.QueryString["hasta"], ref respuesta);
+
+                        if (hasta == null)
+                            paramsOK = false;
+                    }
+
+                    if (paramsOK)
+                    {
+                        context.Response.StatusCode = 200;
+                        context.Response.StatusDescription = "Ok";
+                        respuesta = Funciones.GetBytes(Newtonsoft.Json.JsonConvert.SerializeObject(BD.GetLista(ruta[2].Split('?')[0], desde, hasta)));
+                    }
+                    else
+                    {
+                        context.Response.StatusCode = 400;
+                        context.Response.StatusDescription = "Bad Request";
+                    }
                 }
                 else if (ruta[1].CompareTo("fichero") == 0 && context.Request.HttpMethod.CompareTo("GET") == 0 && ruta.Length == 4)
                 {
+                    Logger.Log("Servicio GET fichero iniciado");
                     Int32 id;
 
                     if (Int32.TryParse(ruta[3], out id))
@@ -131,6 +234,11 @@ namespace VocaliRestServer
                             context.Response.StatusDescription = "No Content";
                         }
                     }
+                    else
+                    {
+                        context.Response.StatusCode = 400;
+                        context.Response.StatusDescription = "Bad Request";
+                    }
                 }
                 else
                 {
@@ -153,6 +261,7 @@ namespace VocaliRestServer
 
         protected override void OnStop()
         {
+
         }
     }
 }
