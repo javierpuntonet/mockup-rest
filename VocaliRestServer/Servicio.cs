@@ -22,6 +22,11 @@ namespace VocaliRestServer
         HttpListener httpListener = null;
         BackgroundWorker httpServer = null;
         BackgroundWorker envioFicheros = null;
+
+        /*
+         * Un BlockingCollection de tamaño 3 (iniciado posteriormente). Se añade un elemento antes de enviarlo al servidor REST y se elimina al terminar dicho servicio.
+         * De esta manera aseguramos que nunca habrá más de 3 Tasks procesándose simultaneamente en llamadas al servidor REST.
+         */ 
         BlockingCollection<FicheroMP3> ficherosAProcesar = null;
 
         public Servicio()
@@ -54,6 +59,11 @@ namespace VocaliRestServer
             }
         }
 
+        /// <summary>
+        /// Hilo encargado de procesar los ficheros y enviarlo al servidor REST (Mockup)
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
         void envioFicheros_DoWork(object sender, DoWorkEventArgs e)
         {
             while (true)
@@ -73,7 +83,9 @@ namespace VocaliRestServer
                         f.Estado = FicheroMP3.EstadosFicheroMP3.EnProgreso;
                         BD.ActualizaFicheroMP3(f);
                         Logger.Log("Fichero enviado al servidor REST");
-                        RespuestaTranscripcion rt = MockupServer.Enviar(f);
+                        byte[] contenido = File.ReadAllBytes(System.AppDomain.CurrentDomain.BaseDirectory + f.Id + ".mp3");
+                        RespuestaTranscripcion rt = MockupServer.Enviar(contenido);
+                        //Se simula una espera de 2 segundos en la respuesta del servidor REST para comprobar que efectivamente nunca se procesan más de 3 simultaneamente.
                         Thread.Sleep(2000);
                         if (rt.Codigo == 200)
                         {
@@ -95,6 +107,11 @@ namespace VocaliRestServer
             }
         }
 
+        /// <summary>
+        /// Hilo servidor HTTP. Procesa las entradas HTTP y las envía a un Task para que se ejecuten
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
         void httpServer_DoWork(object sender, DoWorkEventArgs e)
         {
             while (true)
@@ -108,6 +125,12 @@ namespace VocaliRestServer
             }
         }
 
+        /// <summary>
+        /// Comprueba que la fecha es válida y genera una respuesta de parámetros incorrectos si no lo es.
+        /// </summary>
+        /// <param name="fecha"></param>
+        /// <param name="respuesta"></param>
+        /// <returns>Devuelve NULL si la fecha no es válida. Un DateTime si sí lo es</returns>
         private DateTime? CheckParamFecha(String fecha, ref byte[] respuesta)
         {
             DateTime fechaOut;
@@ -123,6 +146,10 @@ namespace VocaliRestServer
             else return fechaOut;
         }
 
+        /// <summary>
+        /// Tarea encargada de ejecutar el proceso HTTP
+        /// </summary>
+        /// <param name="context"></param>
         private void HttpListenerCallback(HttpListenerContext context)
         {
             byte[] respuesta = new byte[0];
@@ -133,6 +160,7 @@ namespace VocaliRestServer
             {
                 String[] ruta = context.Request.RawUrl.Split('/');
 
+                //La ruta es /fichero/{usuario} y es un POST
                 if (ruta[1].CompareTo("fichero") == 0 && context.Request.HttpMethod.CompareTo("POST") == 0 && ruta.Length == 3)
                 {
                     Logger.Log("Servicio POST fichero iniciado");
@@ -171,6 +199,7 @@ namespace VocaliRestServer
                         context.Response.StatusDescription = "Ok";
                     }
                 }
+                //La ruta es /ficheros/{usuario} y es un GET. Los parámetros desde y hasta al ser opcionales no van en formato Friendly, sino en Query Parameters
                 else if (ruta[1].CompareTo("ficheros") == 0 && context.Request.HttpMethod.CompareTo("GET") == 0 && ruta.Length == 3)
                 {
                     Logger.Log("Servicio GET ficheros iniciado");
@@ -204,6 +233,7 @@ namespace VocaliRestServer
                         context.Response.StatusDescription = "Bad Request";
                     }
                 }
+                //La ruta es /fichero/{usuario}/{id} y es un GET
                 else if (ruta[1].CompareTo("fichero") == 0 && context.Request.HttpMethod.CompareTo("GET") == 0 && ruta.Length == 4)
                 {
                     Logger.Log("Servicio GET fichero iniciado");
@@ -240,6 +270,7 @@ namespace VocaliRestServer
                         context.Response.StatusDescription = "Bad Request";
                     }
                 }
+                //Cualquier otro caso la ruta no existe y se devuelve Not Found.
                 else
                 {
                     context.Response.StatusCode = 404;
@@ -248,8 +279,9 @@ namespace VocaliRestServer
             }
             catch (System.Exception ex)
             {
+                //Si se produce una excepción se devuelve un Internal Server Error (500)
                 context.Response.StatusCode = 500;
-                context.Response.StatusDescription = "Error";
+                context.Response.StatusDescription = "Internal Server Error";
 
                 respuesta = Funciones.GetBytes(ex.ToString());
             }

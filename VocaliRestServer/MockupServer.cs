@@ -10,7 +10,12 @@ namespace VocaliRestServer
 {
     public class MockupServer
     {
-        public static RespuestaTranscripcion Enviar(FicheroMP3 fichero)
+        /// <summary>
+        /// Simulación de envío de un fichero MP3 al servidor Mockup junto con el usuario
+        /// </summary>
+        /// <param name="fichero">Contenido del fichero MP3 en bytes</param>
+        /// <returns>Devuelve una RespuestaTranscripcion con Codigo 500 si ha habido un error, o 200 y la transcripción si todo ha ido bien</returns>
+        public static RespuestaTranscripcion Enviar(byte[] fichero)
         {
             Logger.Log("Procesamiento del fichero en el Mockup Base de datos");
             Random random = new Random();

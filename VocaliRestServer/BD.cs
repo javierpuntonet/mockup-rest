@@ -12,6 +12,9 @@ namespace VocaliRestServer
     {
         private static LiteDB.LiteDatabase db = null;
 
+        /// <summary>
+        /// Inicia la BD
+        /// </summary>
         public static void Init() {
             if (db == null)
             {
@@ -20,11 +23,19 @@ namespace VocaliRestServer
             }
         }
 
+        /// <summary>
+        /// Constructor privado para que se utilize el método Init
+        /// </summary>
         private BD()
         {
             
         }
 
+        /// <summary>
+        /// Añade un fichero mp3 a la BD
+        /// </summary>
+        /// <param name="fichero"></param>
+        /// <returns></returns>
         public static FicheroMP3 AddFicheroMP3(FicheroMP3 fichero)
         {
             LiteDB.LiteCollection<FicheroMP3> ficheros = db.GetCollection<FicheroMP3>("ficheros");
@@ -34,6 +45,11 @@ namespace VocaliRestServer
             return fichero;
         }
 
+        /// <summary>
+        /// Actualiza un fichero mp3 ya existente
+        /// </summary>
+        /// <param name="fichero"></param>
+        /// <returns></returns>
         public static FicheroMP3 ActualizaFicheroMP3(FicheroMP3 fichero)
         {
             LiteDB.LiteCollection<FicheroMP3> ficheros = db.GetCollection<FicheroMP3>("ficheros");
@@ -42,6 +58,12 @@ namespace VocaliRestServer
             return fichero;
         }
 
+        /// <summary>
+        /// Devuelve una lista de todos los ficheros MP3 entre 2 fechas (opcionales) de todos los usuarios
+        /// </summary>
+        /// <param name="desde"></param>
+        /// <param name="hasta"></param>
+        /// <returns></returns>
         public static IEnumerable<FicheroMP3> GetLista(DateTime? desde, DateTime? hasta)
         {
             LiteDB.LiteCollection<FicheroMP3> ficheros = db.GetCollection<FicheroMP3>("ficheros");
@@ -58,6 +80,13 @@ namespace VocaliRestServer
             return listaTemporal;
         }
 
+        /// <summary>
+        /// Devuelve una lista de todos los ficheros MP3 entre 2 fechas (opcionales) de un usuario concreto
+        /// </summary>
+        /// <param name="usuario"></param>
+        /// <param name="desde"></param>
+        /// <param name="hasta"></param>
+        /// <returns></returns>
         public static IEnumerable<FicheroMP3> GetLista(String usuario, DateTime? desde, DateTime? hasta)
         {
             LiteDB.LiteCollection<FicheroMP3> ficheros = db.GetCollection<FicheroMP3>("ficheros");
@@ -74,6 +103,12 @@ namespace VocaliRestServer
             return listaTemporal;
         }
 
+        /// <summary>
+        /// Devuelve la transcripción de un fichero mp3 a partir de su usuario y su id. El usuario se usa por seguridad.
+        /// </summary>
+        /// <param name="usuario"></param>
+        /// <param name="id"></param>
+        /// <returns></returns>
         public static RespuestaTranscripcion GetTranscripcion(String usuario, Int32 id)
         {
             Logger.Log("Solicitada transcripción de la Base de datos");
