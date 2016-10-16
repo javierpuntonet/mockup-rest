@@ -126,27 +126,6 @@ namespace VocaliRestServer
         }
 
         /// <summary>
-        /// Comprueba que la fecha es válida y genera una respuesta de parámetros incorrectos si no lo es.
-        /// </summary>
-        /// <param name="fecha"></param>
-        /// <param name="respuesta"></param>
-        /// <returns>Devuelve NULL si la fecha no es válida. Un DateTime si sí lo es</returns>
-        private DateTime? CheckParamFecha(String fecha, ref byte[] respuesta)
-        {
-            DateTime fechaOut;
-            if (!DateTime.TryParse(fecha, out fechaOut))
-            {
-                RespuestaError re = new RespuestaError()
-                {
-                    Error = "Los parámetros de fecha no tienen el formato correcto. Formato necesario: YYYY-MM-DD"
-                };
-                respuesta = Funciones.GetBytes(Newtonsoft.Json.JsonConvert.SerializeObject(re));
-                return null;
-            }
-            else return fechaOut;
-        }
-
-        /// <summary>
         /// Tarea encargada de ejecutar el proceso HTTP
         /// </summary>
         /// <param name="context"></param>
@@ -209,13 +188,13 @@ namespace VocaliRestServer
 
                     if (context.Request.QueryString["desde"] != null)
                     {
-                        desde = CheckParamFecha(context.Request.QueryString["desde"], ref respuesta);
+                        desde = Funciones.CheckParamFecha(context.Request.QueryString["desde"], ref respuesta);
                         if (desde == null)
                             paramsOK = false;
                     }
                     if (context.Request.QueryString["hasta"] != null)
                     {
-                        hasta = CheckParamFecha(context.Request.QueryString["hasta"], ref respuesta);
+                        hasta = Funciones.CheckParamFecha(context.Request.QueryString["hasta"], ref respuesta);
 
                         if (hasta == null)
                             paramsOK = false;
